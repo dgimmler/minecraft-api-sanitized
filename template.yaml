@@ -1,0 +1,458 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  minecraft-api
+
+  This API provides general helper functions for the Happy Landings minecraft
+  server site:
+    - getServerStatus
+    - startServer
+    - stopServer
+
+Parameters:
+  MinecraftServerInstanceId:
+    Default: i-0818abb5386b0082a
+    Type: String
+    Description: ID of ec2 instance serving minecraft server
+  MinecraftApiBaseName:
+    Default: minecraft
+    Type: String
+    Description: Base name of api
+  MinecraftApiStageName:
+    Default: v1
+    Type: String
+    Description: Base name of api
+  MinecraftManageRoleArn:
+    Default: arn:aws:iam::648005442253:role/minecraft_manage
+    Type: String
+    Description: >
+      Role arn allowing start/stop access to ec2 instance servingin minecraft 
+      server
+  StaticSiteBucketName:
+    Default: "happy-landings-static-site"
+    Type: String
+    Description: Name of the bucket to store all static site content
+  CognitoPoolName:
+    Default: "Minecraft"
+    Type: String
+    Description: Name of the cognito pool
+  TimerKeyName:
+    Default: "minecraftServerStopTime"
+    Type: String
+    Description: Name of parameter store timer param
+  CloudwatchRuleName:
+    Default: "StopMinecraftServer"
+    Type: String
+    Description: Name of scheduled server stop rule
+  UserLoginTableName:
+    Description: The name of the DynamoDb table
+    Type: String
+    Default: minecraft-logins
+  DynamoDbPrimaryKeyAttribute:
+    Description: >
+      Name of DynamoDB table hash key attribute. Defaults to pk for primary
+      key. It is suggested to keep this attribute generic, as it should be
+      abstracted via an API anyway and a generic name leaves more flexibility
+      if the key name should change in the API.
+    Type: String
+    Default: PK
+    AllowedPattern: "([A-Z]+.*)"
+  DynamoDbSortKeyAttribute:
+    Description: >
+      Name of DynamoDB table sort key attribute. Defaults to sk for sort key.
+      It is suggested to keep this attribute generic, as it should be
+      abstracted via an API anyway and a generic name leaves more flexibility
+      if the key name should change in the API.
+    Type: String
+    Default: SK
+    AllowedPattern: "([A-Z]+.*)"
+  DynamoDbTtlAttribute:
+    Description: >
+      DynamoDB Table attribute to use for determining time to live for item
+    Type: String
+    Default: Expires
+  DynamoDbAutoscaleMinReadCapacityUnits:
+    Description: >
+      DynamoDB autoscaling min read capacity, or simply static min capacity if
+      not using autoscaling
+    Type: Number
+    Default: 10
+  DynamoDbAutoscaleMinWriteCapacityUnits:
+    Description: >
+      DynamoDB autoscaling min write capacity, or simply static min capacity if
+      not using autoscaling
+    Type: Number
+    Default: 10
+  DynamoDbStreamType:
+    Description: >
+      When an item in the table is modified, it determines what information is
+      written to the table's stream.
+    Type: String
+    Default: KEYS_ONLY
+    AllowedValues:
+      - KEYS_ONLY
+      - NEW_IMAGE
+      - OLD_IMAGE
+      - NEW_AND_OLD_IMAGES
+  DynamoDbBillingMode:
+    Description: PAY_PER_REQUEST or PROVISIONED, defaults to PROVISIONED
+    Type: String
+    Default: PROVISIONED
+    AllowedValues:
+      - PAY_PER_REQUEST
+      - PROVISIONED
+
+Globals:
+  Function:
+    Timeout: 5
+    Runtime: go1.x
+    Tracing: Active
+    Environment:
+      Variables:
+        ServerId: !Ref MinecraftServerInstanceId
+        # CloudfrontOrigin: !Sub "https://${StaticSiteCloudfrontDistribution.DomainName}"
+        CloudfrontOrigin: "*"
+        TimerKeyName: !Ref TimerKeyName
+        CloudwatchRuleName: !Ref CloudwatchRuleName
+        UserLoginTableName: !Ref UserLoginTableName
+        Region: !Sub "${AWS::Region}"
+
+Resources:
+  getServerStatus:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      CodeUri: src/handlers/getServerStatus/
+      Handler: getServerStatus
+      Role: !Ref MinecraftManageRoleArn
+      Events:
+        CatchAll:
+          Type: Api
+          Properties:
+            Path: /status
+            Method: GET
+            RestApiId: !Ref Api
+  startServer:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      CodeUri: src/handlers/startServer/
+      Handler: startServer
+      Role: !Ref MinecraftManageRoleArn
+      Environment:
+        Variables:
+          ServerId: !Ref MinecraftServerInstanceId
+          # CloudfrontOrigin: !Sub "https://${StaticSiteCloudfrontDistribution.DomainName}"
+          CloudfrontOrigin: "*"
+          TimerKeyName: !Ref TimerKeyName
+          CloudwatchRuleName: !Ref CloudwatchRuleName
+          StopServerArn: !GetAtt stopServer.Arn
+          # StopServerArn: "arn:aws:lambda:us-west-2:648005442253:function:minecraft-api-stopServer-MXITP7UJEH8X"
+      Events:
+        CatchAll:
+          Type: Api
+          Properties:
+            Path: /start
+            Method: POST
+            RestApiId: !Ref Api
+  stopServer:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      CodeUri: src/handlers/stopServer/
+      Handler: stopServer
+      Role: !Ref MinecraftManageRoleArn
+      Events:
+        CatchAll:
+          Type: Api
+          Properties:
+            Path: /stop
+            Method: POST
+            RestApiId: !Ref Api
+        ScheduledStop:
+          # set scheduled stop here so that the appropriate permissions are added
+          Type: Schedule
+          Properties:
+            Schedule: "rate(365 days)" # just make it long as this will be overwritten by start function
+            Name: !Ref CloudwatchRuleName
+            Description: Checks stop time for minecraft server every 30 minutes and stops server if past stop time
+            Enabled: False # keep disabled as well, as start function will enable it
+
+  getServerTimer:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      CodeUri: src/handlers/getServerTimer/
+      Handler: getServerTimer
+      Role: !Ref MinecraftManageRoleArn
+      Events:
+        CatchAll:
+          Type: Api
+          Properties:
+            Path: /timer
+            Method: GET
+            RestApiId: !Ref Api
+  updateServerTimer:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      CodeUri: src/handlers/updateTimer/
+      Handler: updateServerTimer
+      Role: !Ref MinecraftManageRoleArn
+      Events:
+        CatchAll:
+          Type: Api
+          Properties:
+            Path: /updateTimer
+            Method: POST
+            RestApiId: !Ref Api
+  upsertLogin:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      CodeUri: src/handlers/upsertLogin/
+      Handler: upsertLogin
+      Role: !Ref MinecraftManageRoleArn
+      Events:
+        CatchAll:
+          Type: Api
+          Properties:
+            Path: /upsertLogin
+            Method: POST
+            RestApiId: !Ref Api
+            Auth:
+              Authorizer: NONE
+              ApiKeyRequired: TRUE
+  getLogins:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      CodeUri: src/handlers/getLogins/
+      Handler: getLogins
+      Role: !Ref MinecraftManageRoleArn
+      Events:
+        CatchAll:
+          Type: Api
+          Properties:
+            Path: /getLogins
+            Method: POST
+            RestApiId: !Ref Api
+            Auth:
+              Authorizer: NONE
+              ApiKeyRequired: TRUE
+  Api:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Ref MinecraftApiBaseName
+      StageName: !Ref MinecraftApiStageName
+      Cors:
+        # AllowOrigin: !Sub "'https://${StaticSiteCloudfrontDistribution.DomainName}'"
+        AllowOrigin: "'*'"
+        AllowHeaders: "'Access-Control-Allow-Origin,Authorization,x-api-key'"
+        AllowMethods: "'POST, GET, OPTIONS'"
+      Auth:
+        DefaultAuthorizer: CongitoAuth
+        AddDefaultAuthorizerToCorsPreflight: false
+        Authorizers:
+          CongitoAuth:
+            UserPoolArn: !GetAtt CognitoPool.Arn
+        ResourcePolicy:
+          CustomStatements:
+            - Effect: Allow
+              Principal:
+                AWS: "*"
+              Action:
+                - "execute-api:Invoke"
+              Resource: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:*"
+      # AccessLogSetting:
+      #   DestinationArn: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/apigateway/minecraft"
+      #   Format: '{ "requestId":"$context.requestId", "ip": "$context.identity.sourceIp", "caller":"$context.identity.caller", "user":"$context.identity.user","requestTime":"$context.requestTime", "httpMethod":"$context.httpMethod","resourcePath":"$context.resourcePath", "status":"$context.status","protocol":"$context.protocol", "responseLength":"$context.responseLength", "cognitoUser": {"id": "$context.authorizer.principalId"} }'
+  StaticSiteBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref StaticSiteBucketName
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      AccessControl: Private
+      # PublicAccessBlockConfiguration:
+      #   BlockPublicAcls: TRUE
+      #   BlockPublicPolicy: TRUE
+      #   IgnorePublicAcls: TRUE
+      #   RestrictPublicBuckets: TRUE
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders:
+              - "Access-Control-Allow-Origin"
+              - "Access-Control-Request-Headers"
+              - "Access-Control-Request-Method"
+              - "Origin"
+              - "Referer"
+              - "Authorization"
+              - "x-api-key"
+            AllowedOrigins:
+              # - !Sub "'https://${StaticSiteCloudfrontDistribution.DomainName}'"
+              - "'*'"
+            AllowedMethods:
+              - GET
+              - POST
+              - HEAD
+  StaticSiteBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    DependsOn: StaticSiteBucket # we're just using a var for bucket name so need to explicitly indicate dependency
+    Properties:
+      Bucket: !Ref StaticSiteBucketName
+      PolicyDocument:
+        Statement:
+          - Action:
+              - "s3:GetObject"
+            Effect: "Allow"
+            Resource: !Sub "arn:aws:s3:::${StaticSiteBucketName}/*"
+            Principal:
+              CanonicalUser: !GetAtt StaticSiteCloudfrontOriginAccessIdentity.S3CanonicalUserId
+  StaticSiteCloudfrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        DefaultRootObject: "index.html"
+        PriceClass: PriceClass_100
+        IPV6Enabled: FALSE
+        Origins:
+          - Id: !Sub "S3-${StaticSiteBucketName}"
+            DomainName: !Sub "${StaticSiteBucketName}.s3.${AWS::Region}.amazonaws.com"
+            S3OriginConfig:
+              OriginAccessIdentity: !Sub "origin-access-identity/cloudfront/${StaticSiteCloudfrontOriginAccessIdentity}"
+        DefaultCacheBehavior:
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+          ForwardedValues:
+            Headers:
+              - "Access-Control-Allow-Origin"
+              - "Access-Control-Request-Headers"
+              - "Access-Control-Request-Method"
+              - "Origin"
+              - "Referer"
+              - "Authorization"
+              - "x-api-key"
+            QueryString: FALSE
+          TargetOriginId: !Sub "S3-${StaticSiteBucketName}"
+          ViewerProtocolPolicy: "redirect-to-https"
+        CustomErrorResponses:
+          - ErrorCachingMinTTL: 300
+            ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+          - ErrorCachingMinTTL: 300
+            ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+  StaticSiteCloudfrontOriginAccessIdentity:
+    Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
+    Properties:
+      CloudFrontOriginAccessIdentityConfig:
+        Comment: !Sub "CloudFront OAI for Cloudfront Distribution"
+  CognitoPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Ref CognitoPoolName
+      UsernameAttributes:
+        - email
+      AutoVerifiedAttributes:
+        - email
+      EmailVerificationSubject: "Verify Email for Happy Landings"
+      EmailVerificationMessage: "Temporary Code: {####}"
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: TRUE
+        InviteMessageTemplate:
+          EmailSubject: "Welcome to Happy Landings Yay!"
+          EmailMessage: "Please sign in and change your password at happylandings.com using your email ({username}) and the temporary password: {####}"
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - Name: admin_only
+            Priority: 1
+      DeviceConfiguration:
+        ChallengeRequiredOnNewDevice: TRUE
+        DeviceOnlyRememberedOnUserPrompt: TRUE
+  CognitoClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref CognitoPool
+      GenerateSecret: FALSE
+      ClientName: Minecraft
+  UserLoginTable:
+    Type: AWS::DynamoDB::Table
+    UpdateReplacePolicy: Delete
+    Properties:
+      # TableName: !Ref UserLoginTableName
+      TableName: "minecraft-logins"
+      BillingMode: !Ref DynamoDbBillingMode
+      ProvisionedThroughput:
+        ReadCapacityUnits: !Ref DynamoDbAutoscaleMinReadCapacityUnits
+        WriteCapacityUnits: !Ref DynamoDbAutoscaleMinWriteCapacityUnits
+      AttributeDefinitions:
+        - AttributeName: !Ref DynamoDbPrimaryKeyAttribute
+          AttributeType: "S"
+        - AttributeName: !Ref DynamoDbSortKeyAttribute
+          AttributeType: "S"
+        - AttributeName: "LoginTime" # sort key for Username GSI
+          AttributeType: "N"
+      KeySchema:
+        - AttributeName: !Ref DynamoDbPrimaryKeyAttribute
+          KeyType: "HASH"
+        - AttributeName: !Ref DynamoDbSortKeyAttribute
+          KeyType: "RANGE"
+      GlobalSecondaryIndexes:
+        - IndexName: Username
+          KeySchema:
+            - AttributeName: !Ref DynamoDbPrimaryKeyAttribute
+              KeyType: HASH
+            - AttributeName: "LoginTime"
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+          ProvisionedThroughput:
+            ReadCapacityUnits: !Ref DynamoDbAutoscaleMinReadCapacityUnits
+            WriteCapacityUnits: !Ref DynamoDbAutoscaleMinWriteCapacityUnits
+        - IndexName: Version
+          KeySchema:
+            - AttributeName: "SK"
+              KeyType: HASH
+            - AttributeName: "PK"
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+          ProvisionedThroughput:
+            ReadCapacityUnits: !Ref DynamoDbAutoscaleMinReadCapacityUnits
+            WriteCapacityUnits: !Ref DynamoDbAutoscaleMinWriteCapacityUnits
+
+Outputs:
+  StaticSiteBucketName:
+    Description: "Name of the bucket hosting the static site artifacts"
+    Value: !Ref StaticSiteBucketName
+  ApiId:
+    Description: "Base ID for generated API"
+    Value: !Ref Api
+  GetServerStatusAPI:
+    Description: "API call used to get status of minecraft server"
+    Value: !Sub "curl -X GET https://${Api}.execute-api.${AWS::Region}.amazonaws.com/${MinecraftApiStageName}/status"
+  StartServerAPI:
+    Description: "API call used to start minecraft server"
+    Value: !Sub "curl -X POST https://${Api}.execute-api.${AWS::Region}.amazonaws.com/${MinecraftApiStageName}/start"
+  StopServerAPI:
+    Description: "API call used to stop minecraft server"
+    Value: !Sub "curl -X POST https://${Api}.execute-api.${AWS::Region}.amazonaws.com/${MinecraftApiStageName}/stop"
+  GetServerTimerAPI:
+    Description: "API call used to get unix time stamp for scheduled stop for minecraft server"
+    Value: !Sub "curl -X GET https://${Api}.execute-api.${AWS::Region}.amazonaws.com/${MinecraftApiStageName}/timer"
+  UpdateServerTimerAPI:
+    Description: "API call used to get unix time stamp for scheduled stop for minecraft server"
+    Value: !Sub "curl -X GET https://${Api}.execute-api.${AWS::Region}.amazonaws.com/${MinecraftApiStageName}/updateTimer"
+  StaticSiteCloudfrontDistribution:
+    Description: Endpoint for cloudfront distribution
+    Value: !GetAtt StaticSiteCloudfrontDistribution.DomainName
+  CognitoUserPoolID:
+    Description: Cognito user pool ID
+    Value: !Ref CognitoPool
+  CognitoUserPoolClientID:
+    Description: Client ID for Cognito User Pool
+    Value: !Ref CognitoClient
+  DynamoDbArn:
+    Description: DynamoDB Table ARN
+    Value: !GetAtt UserLoginTable.Arn
