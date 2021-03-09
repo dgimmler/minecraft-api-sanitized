@@ -1,5 +1,4 @@
 .aws-sam
 .aws-sam/*
-.DS_Sore
-.event.jsln
-.event2.json
+.DS_Store
+event*.json
