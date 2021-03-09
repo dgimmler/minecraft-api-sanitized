@@ -11,7 +11,21 @@ import (
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/ec2"
+	"github.com/aws/aws-sdk-go/service/ssm"
 )
+
+// getServiceStatus returns the status of the actual minecraft service ON the
+// server
+func getServiceStatus(sess *session.Session) (string, error) {
+	keyName := os.Getenv("ServerStatusKeyName")
+	svc := ssm.New(sess)
+	input := &ssm.GetParameterInput{Name: &keyName}
+	_, err := svc.GetParameter(input)
+	if err != nil {
+		return "", err
+	}
+	return "running", nil
+}
 
 func handler(request events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
 	cloudfrontOrigin := os.Getenv("CloudfrontOrigin")
@@ -21,7 +35,8 @@ func handler(request events.APIGatewayProxyRequest) (events.APIGatewayProxyRespo
 		"Access-Control-Allow-Headers:": "*",
 	}
 	fmt.Println("Starting session...")
-	svc := ec2.New(session.New())
+	sess := session.New()
+	svc := ec2.New(sess)
 	fmt.Println("Retrieving instance", instanceID, "...")
 	input := &ec2.DescribeInstanceStatusInput{
 		InstanceIds: []*string{
@@ -63,9 +78,34 @@ func handler(request events.APIGatewayProxyRequest) (events.APIGatewayProxyRespo
 			StatusCode: 200,
 		}, nil
 	}
+
+	// get state of the server itself
 	fmt.Println("status:", result.InstanceStatuses)
 	InstanceState := result.InstanceStatuses[0].InstanceState.Name
 
+	// if the server is on, get state of the minecraft service ON the server
+	if *InstanceState == "running" {
+		status, err := getServiceStatus(sess)
+		if err != nil {
+			// err occurs because parameter does not yet exist, indicating it's
+			// pending
+			return events.APIGatewayProxyResponse{
+				Headers:    headers,
+				Body:       "pending",
+				StatusCode: 200,
+			}, nil
+		}
+
+		fmt.Println("service status:", status)
+		return events.APIGatewayProxyResponse{
+			Headers:    headers,
+			Body:       status,
+			StatusCode: 200,
+		}, nil
+	}
+
+	// otherwise just return the current status
+	fmt.Println("instance state:", *InstanceState)
 	return events.APIGatewayProxyResponse{
 		Headers:    headers,
 		Body:       *InstanceState,

@@ -11,7 +11,7 @@ Description: >
 
 Parameters:
   MinecraftServerInstanceId:
-    Default: i-0818abb5386b0082a
+    Default: i-1234abc5678d9012e
     Type: String
     Description: ID of ec2 instance serving minecraft server
   MinecraftApiBaseName:
@@ -23,13 +23,13 @@ Parameters:
     Type: String
     Description: Base name of api
   MinecraftManageRoleArn:
-    Default: arn:aws:iam::648005442253:role/minecraft_manage
+    Default: arn:aws:iam::123456789012:role/my_role
     Type: String
     Description: >
       Role arn allowing start/stop access to ec2 instance servingin minecraft 
       server
   StaticSiteBucketName:
-    Default: "happy-landings-static-site"
+    Default: "my-bucket-name"
     Type: String
     Description: Name of the bucket to store all static site content
   CognitoPoolName:
@@ -40,6 +40,9 @@ Parameters:
     Default: "minecraftServerStopTime"
     Type: String
     Description: Name of parameter store timer param
+  ServerStatusKeyName:
+    Default: "minecraftServerStatus"
+    Type: String
   CloudwatchRuleName:
     Default: "StopMinecraftServer"
     Type: String
@@ -101,25 +104,43 @@ Parameters:
     AllowedValues:
       - PAY_PER_REQUEST
       - PROVISIONED
-
+  ApiKeyValue:
+    Description: >
+      The API Key needed for access to some of the API endpoints also called
+      from the EC2 Instance
+    Type: String
+    Default: myapikey
 Globals:
   Function:
-    Timeout: 5
+    Timeout: 10
     Runtime: go1.x
     Tracing: Active
     Environment:
       Variables:
         ServerId: !Ref MinecraftServerInstanceId
-        # CloudfrontOrigin: !Sub "https://${StaticSiteCloudfrontDistribution.DomainName}"
-        CloudfrontOrigin: "*"
+        CloudfrontOrigin: !Sub "https://${StaticSiteCloudfrontDistribution.DomainName}"
         TimerKeyName: !Ref TimerKeyName
+        ServerStatusKeyName: !Ref ServerStatusKeyName
         CloudwatchRuleName: !Ref CloudwatchRuleName
         UserLoginTableName: !Ref UserLoginTableName
         Region: !Sub "${AWS::Region}"
-
 Resources:
+  logoutUsers:
+    Type: AWS::Serverless::Function
+    Properties:
+      Timeout: 60
+      CodeUri: src/handlers/logoutUsers/
+      Handler: app.lambda_handler
+      Runtime: python3.7
+      Events:
+        CatchAll:
+          Type: Api
+          Properties:
+            Path: /logoutUsers
+            Method: POST
+            RestApiId: !Ref Api
   getServerStatus:
-    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Type: AWS::Serverless::Function
     Properties:
       CodeUri: src/handlers/getServerStatus/
       Handler: getServerStatus
@@ -132,7 +153,7 @@ Resources:
             Method: GET
             RestApiId: !Ref Api
   startServer:
-    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Type: AWS::Serverless::Function
     Properties:
       CodeUri: src/handlers/startServer/
       Handler: startServer
@@ -143,9 +164,9 @@ Resources:
           # CloudfrontOrigin: !Sub "https://${StaticSiteCloudfrontDistribution.DomainName}"
           CloudfrontOrigin: "*"
           TimerKeyName: !Ref TimerKeyName
+          ServerStatusKeyName: !Ref ServerStatusKeyName
           CloudwatchRuleName: !Ref CloudwatchRuleName
           StopServerArn: !GetAtt stopServer.Arn
-          # StopServerArn: "arn:aws:lambda:us-west-2:648005442253:function:minecraft-api-stopServer-MXITP7UJEH8X"
       Events:
         CatchAll:
           Type: Api
@@ -154,7 +175,7 @@ Resources:
             Method: POST
             RestApiId: !Ref Api
   stopServer:
-    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Type: AWS::Serverless::Function
     Properties:
       CodeUri: src/handlers/stopServer/
       Handler: stopServer
@@ -174,9 +195,41 @@ Resources:
             Name: !Ref CloudwatchRuleName
             Description: Checks stop time for minecraft server every 30 minutes and stops server if past stop time
             Enabled: False # keep disabled as well, as start function will enable it
-
+  markServerStarted:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/handlers/markServerStarted/
+      Handler: markServerStarted
+      Role: !Ref MinecraftManageRoleArn
+      Events:
+        CatchAll:
+          Type: Api
+          Properties:
+            Path: /markStarted
+            Method: POST
+            RestApiId: !Ref Api
+            Auth:
+              Authorizer: NONE
+              ApiKeyRequired: TRUE
+  getApiKey:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/handlers/getKey/
+      Handler: getKey
+      Role: !Ref MinecraftManageRoleArn
+      Environment:
+        Variables:
+          CloudfrontOrigin: "*"
+          ApiKey: !Ref ApiKeyValue
+      Events:
+        CatchAll:
+          Type: Api
+          Properties:
+            Path: /getKey
+            Method: GET
+            RestApiId: !Ref Api
   getServerTimer:
-    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Type: AWS::Serverless::Function
     Properties:
       CodeUri: src/handlers/getServerTimer/
       Handler: getServerTimer
@@ -189,7 +242,7 @@ Resources:
             Method: GET
             RestApiId: !Ref Api
   updateServerTimer:
-    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Type: AWS::Serverless::Function
     Properties:
       CodeUri: src/handlers/updateTimer/
       Handler: updateServerTimer
@@ -202,7 +255,7 @@ Resources:
             Method: POST
             RestApiId: !Ref Api
   upsertLogin:
-    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Type: AWS::Serverless::Function
     Properties:
       CodeUri: src/handlers/upsertLogin/
       Handler: upsertLogin
@@ -218,7 +271,7 @@ Resources:
               Authorizer: NONE
               ApiKeyRequired: TRUE
   getLogins:
-    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Type: AWS::Serverless::Function
     Properties:
       CodeUri: src/handlers/getLogins/
       Handler: getLogins
@@ -239,8 +292,7 @@ Resources:
       Name: !Ref MinecraftApiBaseName
       StageName: !Ref MinecraftApiStageName
       Cors:
-        # AllowOrigin: !Sub "'https://${StaticSiteCloudfrontDistribution.DomainName}'"
-        AllowOrigin: "'*'"
+        AllowOrigin: !Sub "'https://${StaticSiteCloudfrontDistribution.DomainName}'"
         AllowHeaders: "'Access-Control-Allow-Origin,Authorization,x-api-key'"
         AllowMethods: "'POST, GET, OPTIONS'"
       Auth:
@@ -257,9 +309,6 @@ Resources:
               Action:
                 - "execute-api:Invoke"
               Resource: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:*"
-      # AccessLogSetting:
-      #   DestinationArn: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/apigateway/minecraft"
-      #   Format: '{ "requestId":"$context.requestId", "ip": "$context.identity.sourceIp", "caller":"$context.identity.caller", "user":"$context.identity.user","requestTime":"$context.requestTime", "httpMethod":"$context.httpMethod","resourcePath":"$context.resourcePath", "status":"$context.status","protocol":"$context.protocol", "responseLength":"$context.responseLength", "cognitoUser": {"id": "$context.authorizer.principalId"} }'
   StaticSiteBucket:
     Type: AWS::S3::Bucket
     Properties:
@@ -269,11 +318,6 @@ Resources:
           - ServerSideEncryptionByDefault:
               SSEAlgorithm: AES256
       AccessControl: Private
-      # PublicAccessBlockConfiguration:
-      #   BlockPublicAcls: TRUE
-      #   BlockPublicPolicy: TRUE
-      #   IgnorePublicAcls: TRUE
-      #   RestrictPublicBuckets: TRUE
       CorsConfiguration:
         CorsRules:
           - AllowedHeaders:
@@ -285,8 +329,7 @@ Resources:
               - "Authorization"
               - "x-api-key"
             AllowedOrigins:
-              # - !Sub "'https://${StaticSiteCloudfrontDistribution.DomainName}'"
-              - "'*'"
+              - !Sub "'https://${StaticSiteCloudfrontDistribution.DomainName}'"
             AllowedMethods:
               - GET
               - POST

@@ -18,6 +18,19 @@ import (
 	"github.com/aws/aws-sdk-go/service/ssm"
 )
 
+// delete parameter store value for server status
+func deleteStatusParameter(sess *session.Session) error {
+	fmt.Println("deleting status parameter...")
+	keyName := os.Getenv("ServerStatusKeyName")
+	svc := ssm.New(sess)
+	input := &ssm.DeleteParameterInput{Name: &keyName}
+	_, err := svc.DeleteParameter(input)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 // Event is only used to verify if source was scheduled cloudwatch rule. We only
 // need to parse a single value to validate this source.
 type Event struct {
@@ -25,9 +38,8 @@ type Event struct {
 }
 
 // delete parameter store value
-func deleteParameter(sess *session.Session) error {
-	fmt.Println("deleting parameter...")
-	keyName := os.Getenv("TimerKeyName")
+func deleteParameter(sess *session.Session, keyName string) error {
+	fmt.Println("deleting parameter", keyName+"...")
 	svc := ssm.New(sess)
 	input := &ssm.DeleteParameterInput{Name: &keyName}
 	_, err := svc.DeleteParameter(input)
@@ -189,8 +201,19 @@ func handler(request Event) (events.APIGatewayProxyResponse, error) {
 		}, nil
 	}
 
-	// then delete parameters tore value, just to clean everything up
-	err = deleteParameter(sess)
+	// then delete parameter store values, just to clean everything up
+	// delete timer param
+	err = deleteParameter(sess, os.Getenv("TimerKeyName"))
+	if err != nil {
+		return events.APIGatewayProxyResponse{
+			Headers:    headers,
+			Body:       err.Error(),
+			StatusCode: 400,
+		}, nil
+	}
+
+	// delete server status param
+	err = deleteParameter(sess, os.Getenv("ServerStatusKeyName"))
 	if err != nil {
 		return events.APIGatewayProxyResponse{
 			Headers:    headers,

@@ -18,6 +18,36 @@ import (
 	"github.com/aws/aws-sdk-go/service/ssm"
 )
 
+// Creates (or updates if already exists) parameter store parameter with status
+// of "starting" to indicate that the server is running. Returns success/failure
+// of function
+func markAsStarting(sess *session.Session) error {
+	// set properties
+	keyName := os.Getenv("ServerStatusKeyName")
+	fmt.Println("ServerStatusKeyName:", keyName)
+	value := "starting"
+	paramType := "String"
+	desc := "Status of minecraft server. Status reflects specifically the status of the minecraft service ON the server, not the server itself."
+	overwrite := true // overwrite if it already exists
+	input := &ssm.PutParameterInput{
+		Description: &desc,
+		Name:        &keyName,
+		Overwrite:   &overwrite,
+		Value:       &value,
+		Type:        &paramType,
+	}
+
+	// create/upudate parameter
+	svc := ssm.New(sess)
+	_, err := svc.PutParameter(input)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("Marked server as stopped")
+	return nil
+}
+
 func scheduleStop(sess *session.Session) error {
 	fmt.Println("scheduling auto-stopper")
 	svc := cloudwatchevents.New(sess)
@@ -161,6 +191,19 @@ func handler(request events.APIGatewayProxyRequest) (events.APIGatewayProxyRespo
 			StatusCode: 400,
 		}, nil
 	}
+
+	// finally, create or update parameter store value to indicate server is
+	// booting up. This will be updated as "started" once the minecraft service
+	// itself is actually up and running ON the server
+	// (commented out for now, but leaving in in case we want it back easily)
+	// err = markAsStarting(sess)
+	// if err != nil {
+	// 	return events.APIGatewayProxyResponse{
+	// 		Headers:    headers,
+	// 		Body:       err.Error(),
+	// 		StatusCode: 400,
+	// 	}, nil
+	// }
 
 	return events.APIGatewayProxyResponse{
 		Headers:    headers,

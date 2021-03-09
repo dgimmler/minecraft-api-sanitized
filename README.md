@@ -1,140 +1,61 @@
-# minecraft-api
+# Overview
 
-This is a sample template for minecraft-api - Below is a brief explanation of what we have generated for you:
+This is the public, sanitized version of the (private) repository. Some specific instance IDs and ARNs have been removed.
 
-```bash
-.
-├── Makefile                    <-- Make to automate build
-├── README.md                   <-- This instructions file
-├── hello-world                 <-- Source code for a lambda function
-│   ├── main.go                 <-- Lambda function code
-│   └── main_test.go            <-- Unit tests
-└── template.yaml
+This SAM template deploys an API over API Gateway that includes several endpoints used for managing a minecraft server and website. The endpoints are largely called from the Minecraft website.
+
+All endpoints proxy to lambda functions written in Go. The API structure is very basic. The endpoints are organized in a flat structure under a single version tree:
+
+```
+v1/
+    /getKey
+    /getLogins
+    /getServerStatus
+    /getServerTime
+    /logoutUsers
+    /markServerStarted
+    /startServer
+    /stopServer
+    /updateTimer
+    /upsertLogin
 ```
 
-## Requirements
+## /getKey
 
-* AWS CLI already configured with Administrator permission
-* [Docker installed](https://www.docker.com/community-edition)
-* [Golang](https://golang.org)
-* SAM CLI - [Install the SAM CLI](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-sam-cli-install.html)
+Returns the correct API key needed for other API calls. Mainly used as a process to store the key "on the server" for the serverless website.
 
-## Setup process
+## /getLogins
 
-### Installing dependencies & building the target 
+Returns either list of the latest login times for all users who have ever logged into the minecraft server or a list of all logins for a single user, depending on parameters passed.
 
-In this example we use the built-in `sam build` to automatically download all the dependencies and package our build target.   
-Read more about [SAM Build here](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-cli-command-reference-sam-build.html) 
+## /getServerStatus
 
-The `sam build` command is wrapped inside of the `Makefile`. To execute this simply run
- 
-```shell
-make
-```
+The EC2 instance running the minecraft server and the minecraft server service have separate statusesf, as the minecraft server service isn't started until the EC2 instance is fully booted up. This call returns the status of the actual minecraft server service (started, stopped). If the EC2 instance is starting or stopping, it returns starting or stopping accordingly.
 
-### Local development
+## /getServerTime
 
-**Invoking function locally through local API Gateway**
+The server start event starts a timer for 2 hours after which the server will automatically shut off (to save costs). This call returns how much time is left on that timer.
 
-```bash
-sam local start-api
-```
+## /logoutUsers
 
-If the previous command ran successfully you should now be able to hit the following local endpoint to invoke your function `http://localhost:3000/hello`
+A dynmamodb table tracks the login and logout times for all users who have logged into the minecraft server. This call will mark any currently logged in users as logged out and set their logout times to the current time. Mainly called when the servdr shuts off.
 
-**SAM CLI** is used to emulate both Lambda and API Gateway locally and uses our `template.yaml` to understand how to bootstrap this environment (runtime, where the source code is, etc.) - The following excerpt is what the CLI will read in order to initialize an API and its routes:
+## /markServerStarted
 
-```yaml
-...
-Events:
-    HelloWorld:
-        Type: Api # More info about API Event Source: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#api
-        Properties:
-            Path: /hello
-            Method: get
-```
+The server status returned by /getServerStatus is stored in a parameter store value. This call marks that parameter as started. Mainly called directly from the EC2 instance once the minecraft server service is seen as running.
 
-## Packaging and deployment
+## /startServer
 
-AWS Lambda Golang runtime requires a flat folder with the executable generated on build step. SAM will use `CodeUri` property to know where to look up for the application:
+As the name suggests, starts the minecraft server, starting the EC2 instance and in turn starting the minecraft server service.
 
-```yaml
-...
-    FirstFunction:
-        Type: AWS::Serverless::Function
-        Properties:
-            CodeUri: hello_world/
-            ...
-```
+## /stopServer
 
-To deploy your application for the first time, run the following in your shell:
+As the name suggests,s tops the minecraft server, gracefully stopping the minecraft server service, turning off the EC2 instance and taking a snapshot once stopped.
 
-```bash
-sam deploy --guided
-```
+## /updateTimer
 
-The command will package and deploy your application to AWS, with a series of prompts:
+The shutdown time for the server is stored in a parameter store value that. While /getServerTimer returns the number of seconds between now and that shut down time, this call sets that shutdown time. Either that is 2 hours from now if the server is starting or 30 minutes from the current shutdown time (up to two hours from now) depending on parameters passed.
 
-* **Stack Name**: The name of the stack to deploy to CloudFormation. This should be unique to your account and region, and a good starting point would be something matching your project name.
-* **AWS Region**: The AWS region you want to deploy your app to.
-* **Confirm changes before deploy**: If set to yes, any change sets will be shown to you before execution for manual review. If set to no, the AWS SAM CLI will automatically deploy application changes.
-* **Allow SAM CLI IAM role creation**: Many AWS SAM templates, including this example, create AWS IAM roles required for the AWS Lambda function(s) included to access AWS services. By default, these are scoped down to minimum required permissions. To deploy an AWS CloudFormation stack which creates or modified IAM roles, the `CAPABILITY_IAM` value for `capabilities` must be provided. If permission isn't provided through this prompt, to deploy this example you must explicitly pass `--capabilities CAPABILITY_IAM` to the `sam deploy` command.
-* **Save arguments to samconfig.toml**: If set to yes, your choices will be saved to a configuration file inside the project, so that in the future you can just re-run `sam deploy` without parameters to deploy changes to your application.
+## /upsertLogin
 
-You can find your API Gateway Endpoint URL in the output values displayed after deployment.
-
-### Testing
-
-We use `testing` package that is built-in in Golang and you can simply run the following command to run our tests:
-
-```shell
-go test -v ./hello-world/
-```
-# Appendix
-
-### Golang installation
-
-Please ensure Go 1.x (where 'x' is the latest version) is installed as per the instructions on the official golang website: https://golang.org/doc/install
-
-A quickstart way would be to use Homebrew, chocolatey or your linux package manager.
-
-#### Homebrew (Mac)
-
-Issue the following command from the terminal:
-
-```shell
-brew install golang
-```
-
-If it's already installed, run the following command to ensure it's the latest version:
-
-```shell
-brew update
-brew upgrade golang
-```
-
-#### Chocolatey (Windows)
-
-Issue the following command from the powershell:
-
-```shell
-choco install golang
-```
-
-If it's already installed, run the following command to ensure it's the latest version:
-
-```shell
-choco upgrade golang
-```
-
-## Bringing to the next level
-
-Here are a few ideas that you can use to get more acquainted as to how this overall process works:
-
-* Create an additional API resource (e.g. /hello/{proxy+}) and return the name requested through this new path
-* Update unit test to capture that
-* Package & Deploy
-
-Next, you can use the following resources to know more about beyond hello world samples and how others structure their Serverless applications:
-
-* [AWS Serverless Application Repository](https://aws.amazon.com/serverless/serverlessrepo/)
+Updates or creates a new login session for a user logged into the minecraft server. This essentially means an entry in the dynamodb table. Items in the table simply track the login and logout times. This call either creates that item, or updates the login/logout time as needed.

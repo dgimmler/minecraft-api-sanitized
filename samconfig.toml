@@ -3,8 +3,8 @@ version = 0.1
 [default.deploy]
 [default.deploy.parameters]
 stack_name = "minecraft-api"
-s3_bucket = "aws-sam-cli-managed-default-samclisourcebucket-1cufltg62ifa2"
+s3_bucket = "my-bucket-name"
 s3_prefix = "minecraft-api"
 region = "us-west-2"
 capabilities = "CAPABILITY_IAM"
-parameter_overrides = "MinecraftServerInstanceId=\"i-0818abb5386b0082a\",UserLoginTableName=\"ParameterValue=MyKey\""
+parameter_overrides = "MinecraftServerInstanceId=\"i-1234abc5678d9012e\",UserLoginTableName=\"ParameterValue=MyKey\""
