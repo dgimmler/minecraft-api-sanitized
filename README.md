@@ -1,6 +1,10 @@
-# Overview
+# Purpose
 
 This is the public, sanitized version of the (private) repository. Some specific instance IDs and ARNs have been removed.
+
+This was a project for me to familiarize myself and test some features of SAM templates, Golang and API Gateway. Most technical decisions were made more in respect to the tools I wanted exposure to than for the best tool for the job.
+
+# Overview
 
 This SAM template deploys an API over API Gateway that includes several endpoints used for managing a minecraft server and website. The endpoints are largely called from the Minecraft website.
 
